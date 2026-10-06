@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reembolso KM</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topo">
+  <div class="marca">
+    <svg width="28" height="24" viewBox="0 0 60 51" fill="none" aria-hidden="true">
+      <polygon points="3,3 30,49 37,19" fill="#F0956A" opacity="0.85"/>
+      <polygon points="35,1 57,22 30,49 37,19" fill="#E8500A" opacity="0.92"/>
+    </svg>
+    <div><div class="produto">Reembolso KM</div><div class="sub">by V-Engine</div></div>
+  </div>
+  <nav class="abas" role="tablist">
+    <button data-aba="nova" class="ativa">Nova viagem</button>
+    <button data-aba="viagens">Viagens</button>
+    <button data-aba="relatorio">Relatório</button>
+    <button data-aba="config">Configurações</button>
+  </nav>
+  <div id="quem" class="quem" title="Quem está registrando"></div>
+</header>
+
+<div id="aviso-chave" class="aviso oculto">
+  Chave do Google Maps não configurada no servidor. Crie o arquivo <code>.env</code> com <code>GOOGLE_MAPS_API_KEY=…</code> e reinicie. Veja o README.
+</div>
+
+<main>
+<!-- ================= NOVA VIAGEM ================= -->
+<section id="aba-nova" class="aba">
+  <form id="form" class="card" autocomplete="off">
+    <div class="campo">
+      <label>Colaborador</label>
+      <div id="colabs" class="chips"></div>
+    </div>
+    <div class="linha">
+      <div class="campo"><label for="data">Data</label><input id="data" type="date" required></div>
+      <div class="campo"><label for="hora">Hora de saída</label><input id="hora" type="time" required></div>
+    </div>
+    <div class="campo auto">
+      <label for="origem">De (origem)</label>
+      <input id="origem" type="text" placeholder="Rua, número, bairro ou nome do local" required>
+      <input type="hidden" id="origem_place_id">
+      <ul class="sugestoes" id="sug-origem"></ul>
+    </div>
+    <div class="campo auto">
+      <label for="destino">Para (destino)</label>
+      <input id="destino" type="text" placeholder="Rua, número, bairro ou nome do local" required>
+      <input type="hidden" id="destino_place_id">
+      <ul class="sugestoes" id="sug-destino"></ul>
+    </div>
+    <div class="linha">
+      <label class="check"><input id="ida_volta" type="checkbox"> Ida e volta</label>
+      <button type="button" id="inverter" class="sec" title="Trocar origem e destino">⇅ Inverter</button>
+    </div>
+    <div class="linha">
+      <div class="campo"><label for="uber_manual">Valor do Uber agora (R$)</label><input id="uber_manual" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Opcional: o que o app do Uber cobra pela ida"></div>
+      <div class="campo"><label for="obs">Observação (cliente, motivo)</label><input id="obs" type="text" placeholder="Opcional"></div>
+    </div>
+    <p class="nota">Se informar o valor do Uber, o reembolso passa a ser esse valor. Em ida e volta, ele é dobrado.</p>
+    <div class="acoes">
+      <button type="button" id="calcular" class="sec">Calcular rota</button>
+      <button type="submit" id="salvar" disabled>Salvar viagem</button>
+    </div>
+    <div id="erro" class="erro oculto"></div>
+  </form>
+
+  <div id="resultado" class="card oculto">
+    <div class="kpis">
+      <div class="kpi destaque"><span>Reembolso</span><b id="r-reembolso">—</b><small id="r-modo"></small></div>
+      <div class="kpi"><span>Distância</span><b id="r-km">—</b><small id="r-tempo"></small></div>
+      <div class="kpi"><span>Uber (est.)</span><b id="r-uber">—</b><small id="r-uber-faixa"></small></div>
+      <div class="kpi"><span>Táxi (est.)</span><b id="r-taxi">—</b><small id="r-taxi-band"></small></div>
+    </div>
+    <div id="mapa"></div>
+    <p class="nota">Rota e distância pelo Google Maps. Uber e táxi são estimativas pelas tabelas em Configurações; o Uber real varia com a demanda.</p>
+  </div>
+</section>
+
+<!-- ================= VIAGENS ================= -->
+<section id="aba-viagens" class="aba oculto">
+  <div class="card filtros">
+    <label>De <input type="date" id="v-de"></label>
+    <label>Até <input type="date" id="v-ate"></label>
+    <label>Colaborador <select id="v-colab"><option value="">Todos</option></select></label>
+    <button type="button" id="v-buscar" class="sec">Filtrar</button>
+  </div>
+  <div class="card tabela-wrap">
+    <table id="v-tabela">
+      <thead><tr><th>Data</th><th>Colaborador</th><th>Trajeto</th><th class="num">Km</th><th class="num">Reembolso</th><th class="num">Uber</th><th class="num">Táxi</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="v-vazio" class="nota oculto">Nenhuma viagem no período.</p>
+  </div>
+</section>
+
+<!-- ================= RELATÓRIO ================= -->
+<section id="aba-relatorio" class="aba oculto">
+  <div class="card filtros no-print">
+    <label>De <input type="date" id="r-de"></label>
+    <label>Até <input type="date" id="r-ate"></label>
+    <label>Colaborador <select id="r-colab"><option value="">Todos</option></select></label>
+    <button type="button" id="r-mes" class="sec">Este mês</button>
+    <button type="button" id="r-mes-ant" class="sec">Mês anterior</button>
+    <button type="button" id="r-gerar">Gerar</button>
+    <button type="button" id="r-csv" class="sec">CSV</button>
+    <button type="button" id="r-pdf" class="sec">PDF / Imprimir</button>
+  </div>
+  <div id="rel" class="card relatorio oculto">
+    <div class="rel-cab">
+      <div class="marca"><svg width="22" height="19" viewBox="0 0 60 51" fill="none"><polygon points="3,3 30,49 37,19" fill="#F0956A" opacity="0.85"/><polygon points="35,1 57,22 30,49 37,19" fill="#E8500A" opacity="0.92"/></svg>
+        <div><b>Relatório de reembolso de quilometragem</b><div class="sub" id="rel-periodo"></div></div></div>
+      <div class="rel-total"><span>Total a reembolsar</span><b id="rel-total">R$ 0,00</b></div>
+    </div>
+    <table id="rel-resumo">
+      <thead><tr><th>Colaborador</th><th class="num">Viagens</th><th class="num">Km</th><th class="num">Reembolso</th><th class="num">Uber (est.)</th><th class="num">Táxi (est.)</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <h3>Detalhamento</h3>
+    <table id="rel-det">
+      <thead><tr><th>Data</th><th>Colaborador</th><th>Origem → Destino</th><th class="num">Km</th><th>Base</th><th class="num">Reembolso</th><th>Obs.</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="nota">Distâncias calculadas pelo Google Maps na data do registro. Gerado em <span id="rel-gerado"></span>.</p>
+  </div>
+</section>
+
+<!-- ================= CONFIG ================= -->
+<section id="aba-config" class="aba oculto">
+  <form id="cfg-form" class="card">
+    <h3>Reembolso</h3>
+    <div class="linha">
+      <div class="campo"><label>Modo</label>
+        <select id="cfg-modo">
+          <option value="km_fixo">Km × valor fixo por km</option>
+          <option value="uber_fora_pico">Estimativa UberX fora de pico da rota</option>
+        </select></div>
+      <div class="campo"><label>Valor por km (R$)</label><input id="cfg-valor_km" type="number" step="0.01" min="0"></div>
+    </div>
+    <p class="nota">Padrão R$ 2,90/km = média UberX em São Paulo fora de pico, centro expandido (1,65/km + 0,35/min a ~25 km/h + base e taxa amortizadas em ~10 km).</p>
+
+    <h3>UberX São Paulo</h3>
+    <div class="grade">
+      <label>Tarifa base <input id="u-tarifa_base" type="number" step="0.01"></label>
+      <label>Por km <input id="u-por_km" type="number" step="0.01"></label>
+      <label>Por minuto <input id="u-por_min" type="number" step="0.01"></label>
+      <label>Taxa de reserva <input id="u-taxa_reserva" type="number" step="0.01"></label>
+      <label>Tarifa mínima <input id="u-tarifa_minima" type="number" step="0.01"></label>
+      <label>Mult. fora de pico <input id="u-mult_padrao" type="number" step="0.01"></label>
+    </div>
+    <label class="campo">Faixas de preço dinâmico (JSON: nome, dias 0=dom…6=sáb, de, ate, mult)
+      <textarea id="u-faixas" rows="7" spellcheck="false"></textarea></label>
+
+    <h3>Táxi comum São Paulo</h3>
+    <div class="grade">
+      <label>Bandeirada <input id="t-bandeirada" type="number" step="0.01"></label>
+      <label>Km bandeira 1 <input id="t-km_bandeira1" type="number" step="0.01"></label>
+      <label>Km bandeira 2 <input id="t-km_bandeira2" type="number" step="0.01"></label>
+      <label>Hora parada <input id="t-hora_parada" type="number" step="0.01"></label>
+      <label>Bandeira 2 de <input id="t-bandeira2_de" type="time"></label>
+      <label>Bandeira 2 até <input id="t-bandeira2_ate" type="time"></label>
+      <label>Veloc. de fluxo (km/h) <input id="t-velocidade_fluxo_kmh" type="number" step="1"></label>
+    </div>
+    <p class="nota">Bandeira 2 vale também domingos e feriados (SP capital) o dia inteiro. Fonte: Prefeitura de SP, vigência 11/08/2025.</p>
+
+    <h3>Colaboradores</h3>
+    <div id="cfg-colabs" class="lista-colabs"></div>
+    <div class="linha"><input id="cfg-novo-colab" type="text" placeholder="Novo colaborador"><button type="button" id="cfg-add-colab" class="sec">Adicionar</button></div>
+
+    <div class="acoes"><button type="submit">Salvar configurações</button><span id="cfg-ok" class="ok oculto">Salvo ✓</span></div>
+  </form>
+</section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

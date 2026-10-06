@@ -1,0 +1,16 @@
+{
+  "name": "reembolso-km",
+  "version": "0.1.0",
+  "description": "Quilometragem e reembolso de deslocamentos — rota pelo Google Maps, comparativo Uber/táxi, relatório por colaborador",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --watch --env-file-if-exists=.env server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

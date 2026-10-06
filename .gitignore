@@ -1,0 +1,9 @@
+node_modules/
+.env
+data/*.sqlite
+data/*.sqlite-*
+.DS_Store
+.claude/
+
+# documentação de infra fica fora do repo (pasta ../reembolso-km-privado)
+docs/privado/
