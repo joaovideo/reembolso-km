@@ -285,14 +285,23 @@ function comprimirImagem(file) {
     img.src = url;
   });
 }
-$('#d-foto').addEventListener('change', async () => {
-  const f = $('#d-foto').files[0]; if (!f) return;
+// Dois caminhos para a foto: câmera (input com capture, abre a câmera traseira no celular) e galeria/arquivo.
+async function receberFoto(input) {
+  const f = input.files[0]; if (!f) return;
+  mostrarErroD('');
   try {
     fotoDataUrl = await comprimirImagem(f);
     $('#d-preview img').src = fotoDataUrl; $('#d-preview').classList.remove('oculto');
   } catch (e) { mostrarErroD(e.message); }
-});
-$('#d-foto-limpar').addEventListener('click', () => { fotoDataUrl = null; $('#d-foto').value = ''; $('#d-preview').classList.add('oculto'); });
+  input.value = ''; // permite tirar outra foto igual em seguida
+}
+$('#d-foto').addEventListener('change', () => receberFoto($('#d-foto')));
+$('#d-foto-galeria').addEventListener('change', () => receberFoto($('#d-foto-galeria')));
+$('#d-tirar').addEventListener('click', () => $('#d-foto').click());
+$('#d-galeria').addEventListener('click', () => $('#d-foto-galeria').click());
+// No computador não há câmera traseira: o botão vira "Escolher arquivo" e o de galeria some.
+if (!window.matchMedia('(pointer: coarse)').matches) { $('#d-tirar').textContent = '📎 Escolher arquivo'; $('#d-tirar').onclick = () => $('#d-foto-galeria').click(); $('#d-galeria').classList.add('oculto'); }
+$('#d-foto-limpar').addEventListener('click', () => { fotoDataUrl = null; $('#d-foto').value = ''; $('#d-foto-galeria').value = ''; $('#d-preview').classList.add('oculto'); });
 function mostrarErroD(msg) { const e = $('#d-erro'); e.textContent = msg; e.classList.toggle('oculto', !msg); }
 
 async function carregarTipos() {
@@ -310,7 +319,7 @@ $('#d-form').addEventListener('submit', async (e) => {
       colaborador_id: colabSel, data: $('#d-data').value, tipo: $('#d-tipo').value,
       valor: $('#d-valor').value, descricao: $('#d-desc').value.trim(), nota: fotoDataUrl,
     } });
-    $('#d-valor').value = ''; $('#d-desc').value = ''; $('#d-foto-limpar').click();
+    $('#d-valor').value = ''; $('#d-desc').value = ''; $('#d-foto-limpar').click(); $('#d-valor').focus();
     toast(`Despesa salva: ${d.colaborador}, ${TIPOS[d.tipo]}, ${brl(d.valor)}`);
     carregarDespesas();
   } catch (err) { mostrarErroD(err.message); }

@@ -118,8 +118,13 @@
     </div>
     <div class="campo"><label for="d-desc">Usado em qual situação (cliente, motivo, trajeto)</label><input id="d-desc" type="text" required placeholder="Ex.: estacionamento na visita ao cliente X"></div>
     <div class="campo">
-      <label for="d-foto">Foto da nota (opcional)</label>
-      <input id="d-foto" type="file" accept="image/*" capture="environment">
+      <label>Foto da nota (opcional)</label>
+      <div class="linha foto-botoes">
+        <button type="button" id="d-tirar" class="sec">📷 Tirar foto</button>
+        <button type="button" id="d-galeria" class="sec">🖼 Escolher da galeria</button>
+      </div>
+      <input id="d-foto" type="file" accept="image/*" capture="environment" class="oculto">
+      <input id="d-foto-galeria" type="file" accept="image/*" class="oculto">
       <div id="d-preview" class="preview oculto"><img alt="Prévia da nota"><button type="button" id="d-foto-limpar" class="sec">Remover foto</button></div>
     </div>
     <div class="acoes"><button type="submit" id="d-salvar">Salvar despesa</button></div>

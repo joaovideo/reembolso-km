@@ -114,3 +114,5 @@ textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-siz
 #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; align-items: center; justify-content: center; z-index: 100; cursor: zoom-out; }
 #lightbox img { max-width: 95vw; max-height: 95vh; border-radius: 8px; }
 @media print { .thumb { width: 90px; height: 90px; } }
+.foto-botoes button { flex: 1; min-width: 160px; padding: 14px; font-size: 16px; }
+@media (max-width: 640px) { .foto-botoes { flex-direction: column; } .foto-botoes button { width: 100%; } }
