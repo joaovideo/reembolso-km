@@ -116,3 +116,4 @@ textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-siz
 @media print { .thumb { width: 90px; height: 90px; } }
 .foto-botoes button { flex: 1; min-width: 160px; padding: 14px; font-size: 16px; }
 @media (max-width: 640px) { .foto-botoes { flex-direction: column; } .foto-botoes button { width: 100%; } }
+@media (max-width: 640px) { .linha > .campo { flex: 1 1 100%; } }
