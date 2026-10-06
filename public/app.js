@@ -22,6 +22,7 @@ function mostrarAba(nome) {
   document.querySelectorAll('.abas button').forEach((b) => b.classList.toggle('ativa', b.dataset.aba === nome));
   document.querySelectorAll('.aba').forEach((s) => s.classList.toggle('oculto', s.id !== `aba-${nome}`));
   if (nome === 'viagens') carregarViagens();
+  if (nome === 'despesas') carregarDespesas();
   if (nome === 'config') carregarConfig();
   location.hash = nome;
 }
@@ -36,7 +37,11 @@ async function carregarColabs() {
     colabSel = Number(b.dataset.id); localStorage.setItem('colab', colabSel); carregarColabs();
   }));
   $('#quem').textContent = ativos.find((c) => c.id === colabSel)?.nome || 'Quem é você?';
-  for (const sel of ['#v-colab', '#r-colab']) {
+  $('#d-colabs').innerHTML = ativos.map((c) => `<button type="button" data-id="${c.id}" class="${c.id === colabSel ? 'sel' : ''}">${c.nome}</button>`).join('');
+  $('#d-colabs').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    colabSel = Number(b.dataset.id); localStorage.setItem('colab', colabSel); carregarColabs();
+  }));
+  for (const sel of ['#v-colab', '#r-colab', '#d-colab-f']) {
     const el = $(sel); const atual = el.value;
     el.innerHTML = '<option value="">Todos</option>' + colabs.map((c) => `<option value="${c.id}">${c.nome}</option>`).join('');
     el.value = atual;
@@ -84,7 +89,7 @@ $('#inverter').addEventListener('click', () => {
   $('#origem').value = $('#destino').value; $('#origem_place_id').value = $('#destino_place_id').value;
   $('#destino').value = o; $('#destino_place_id').value = op; invalidar();
 });
-['#data', '#hora', '#ida_volta'].forEach((s) => $(s).addEventListener('change', invalidar));
+['#data', '#hora', '#ida_volta', '#km_saida', '#km_chegada'].forEach((s) => $(s).addEventListener('change', invalidar));
 
 function invalidar() { calculo = null; $('#salvar').disabled = true; }
 
@@ -124,6 +129,7 @@ function corpo() {
     destino: $('#destino').value.trim(), destino_place_id: $('#destino_place_id').value || null,
     ida_volta: $('#ida_volta').checked, observacao: $('#obs').value.trim(),
     uber_manual: $('#uber_manual').value.trim() || null,
+    km_saida: $('#km_saida').value.trim() || null, km_chegada: $('#km_chegada').value.trim() || null,
   };
 }
 
@@ -171,7 +177,10 @@ $('#calcular').addEventListener('click', async () => {
     calculo = await api('/api/calcular', { method: 'POST', body: b });
     mostrarReembolso(calculo.reembolso);
     $('#r-km').textContent = kmf(calculo.km);
-    $('#r-tempo').textContent = `${calculo.minutos} min${calculo.ida_volta ? ` · ida ${kmf(calculo.km_ida)} + volta ${kmf(calculo.km_volta)}` : ''}`;
+    $('#r-tempo').textContent = calculo.km_saida != null
+      ? `odômetro ${calculo.km_saida} → ${calculo.km_chegada} · Google ${kmf(calculo.km_google)} · ${calculo.minutos} min`
+      : `${calculo.minutos} min${calculo.ida_volta ? ` · ida ${kmf(calculo.km_ida)} + volta ${kmf(calculo.km_volta)}` : ''}`;
+    if (calculo.aviso_odometro) mostrarErro(calculo.aviso_odometro);
     $('#r-uber').textContent = brl(calculo.uber.valor);
     $('#r-uber-faixa').textContent = `${calculo.uber.faixa} ×${calculo.uber.mult.toFixed(2)}${calculo.uber.mult !== 1 ? ` · fora de pico ${brl(calculo.uber_fora_pico)}` : ''}`;
     $('#r-taxi').textContent = brl(calculo.taxi.valor);
@@ -192,7 +201,7 @@ $('#form').addEventListener('submit', async (e) => {
   try {
     const v = await api('/api/viagens', { method: 'POST', body: corpo() });
     $('#origem').value = ''; $('#origem_place_id').value = ''; $('#destino').value = ''; $('#destino_place_id').value = ''; $('#obs').value = '';
-    $('#ida_volta').checked = false; $('#uber_manual').value = ''; invalidar(); $('#resultado').classList.add('oculto');
+    $('#ida_volta').checked = false; $('#uber_manual').value = ''; $('#km_saida').value = ''; $('#km_chegada').value = ''; invalidar(); $('#resultado').classList.add('oculto');
     mostrarAba('viagens');
     toast(`Viagem salva: ${v.colaborador}, ${kmf(v.km)}, ${brl(v.reembolso)}`);
   } catch (err) { mostrarErro(err.message); $('#salvar').disabled = false; }
@@ -210,7 +219,7 @@ async function carregarViagens() {
   $('#v-tabela tbody').innerHTML = vs.map((v) => `<tr>
     <td>${dataBR(v.data_hora)}<br><small>${v.data_hora.slice(11, 16)}</small></td>
     <td>${v.colaborador}</td>
-    <td class="traj">${v.origem} → ${v.destino}${v.ida_volta ? ' <small>(ida e volta)</small>' : ''}${v.observacao ? `<small>${v.observacao}</small>` : ''}</td>
+    <td class="traj">${v.origem} → ${v.destino}${v.ida_volta ? ' <small>(ida e volta)</small>' : ''}${v.km_saida != null ? `<small>odômetro ${v.km_saida} → ${v.km_chegada} (Google ${kmf(v.km_google)})</small>` : ''}${v.observacao ? `<small>${v.observacao}</small>` : ''}</td>
     <td class="num">${kmf(v.km)}</td><td class="num"><b>${brl(v.reembolso)}</b>${v.modo_reembolso === 'uber_manual' ? `<br><small>Uber informado ${brl(v.uber_manual)}${v.ida_volta ? ' ×2' : ''}</small>` : ''}</td>
     <td class="num">${brl(v.uber_estimado)}</td><td class="num">${brl(v.taxi_estimado)}</td>
     <td><button class="excluir" data-id="${v.id}" title="Excluir">✕</button></td></tr>`).join('');
@@ -245,13 +254,94 @@ async function gerarRelatorio() {
   const per = r.periodo.de || r.periodo.ate ? `${r.periodo.de ? dataBR(r.periodo.de) : 'início'} a ${r.periodo.ate ? dataBR(r.periodo.ate) : 'hoje'}` : 'Todo o período';
   const colabNome = $('#r-colab').selectedOptions[0]?.textContent;
   $('#rel-periodo').textContent = `${per}${$('#r-colab').value ? ` · ${colabNome}` : ''}`;
-  $('#rel-total').textContent = brl(r.total.reembolso);
-  $('#rel-resumo tbody').innerHTML = r.colaboradores.map((c) => `<tr><td>${c.colaborador}</td><td class="num">${c.viagens}</td><td class="num">${kmf(c.km)}</td><td class="num"><b>${brl(c.reembolso)}</b></td><td class="num">${brl(c.uber)}</td><td class="num">${brl(c.taxi)}</td></tr>`).join('')
-    + `<tr><td><b>Total</b></td><td class="num"><b>${r.total.viagens}</b></td><td class="num"><b>${kmf(r.total.km)}</b></td><td class="num"><b>${brl(r.total.reembolso)}</b></td><td class="num">${brl(r.total.uber)}</td><td class="num">${brl(r.total.taxi)}</td></tr>`;
-  $('#rel-det tbody').innerHTML = r.viagens.map((v) => `<tr><td>${dataBR(v.data_hora)} ${v.data_hora.slice(11, 16)}</td><td>${v.colaborador}</td><td>${v.origem} → ${v.destino}${v.ida_volta ? ' (ida e volta)' : ''}</td><td class="num">${kmf(v.km)}</td><td>${baseReembolso(v)}</td><td class="num">${brl(v.reembolso)}</td><td>${v.observacao || ''}</td></tr>`).join('');
+  $('#rel-total').textContent = brl(r.total.geral);
+  $('#rel-total-sub').textContent = `km ${brl(r.total.reembolso)} + despesas ${brl(r.total.despesas)}`;
+  $('#rel-resumo tbody').innerHTML = r.colaboradores.map((c) => `<tr><td>${c.colaborador}</td><td class="num">${c.viagens}</td><td class="num">${kmf(c.km)}</td><td class="num">${brl(c.reembolso)}</td><td class="num">${brl(c.despesas || 0)}</td><td class="num"><b>${brl(c.total)}</b></td><td class="num">${brl(c.uber)}</td><td class="num">${brl(c.taxi)}</td></tr>`).join('')
+    + `<tr><td><b>Total</b></td><td class="num"><b>${r.total.viagens}</b></td><td class="num"><b>${kmf(r.total.km)}</b></td><td class="num"><b>${brl(r.total.reembolso)}</b></td><td class="num"><b>${brl(r.total.despesas)}</b></td><td class="num"><b>${brl(r.total.geral)}</b></td><td class="num">${brl(r.total.uber)}</td><td class="num">${brl(r.total.taxi)}</td></tr>`;
+  $('#rel-desp tbody').innerHTML = r.despesas.length ? r.despesas.map((d) => `<tr><td>${dataBR(d.data)}</td><td>${d.colaborador}</td><td>${d.tipo_nome}</td><td>${esc(d.descricao)}</td><td class="num">${brl(d.valor)}</td><td>${d.tem_nota ? `<img class="thumb" src="/api/despesas/${d.id}/nota" alt="nota" data-full="/api/despesas/${d.id}/nota">` : '—'}</td></tr>`).join('') : '<tr><td colspan="6" class="nota">Nenhuma despesa no período.</td></tr>';
+  $('#rel-det tbody').innerHTML = r.viagens.map((v) => `<tr><td>${dataBR(v.data_hora)} ${v.data_hora.slice(11, 16)}</td><td>${v.colaborador}</td><td>${v.origem} → ${v.destino}${v.ida_volta ? ' (ida e volta)' : ''}</td><td class="num">${kmf(v.km)}${v.km_saida != null ? `<br><small>odômetro</small>` : ''}</td><td>${baseReembolso(v)}</td><td class="num">${brl(v.reembolso)}</td><td>${esc(v.observacao || '')}</td></tr>`).join('');
   $('#rel-gerado').textContent = new Date().toLocaleString('pt-BR');
   $('#rel').classList.remove('oculto');
 }
+
+// ---------- despesas ----------
+const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let TIPOS = {};
+let fotoDataUrl = null;
+
+// Reduz a foto no próprio celular (máx. 1600 px, JPEG 80%) para não subir 5 MB por nota.
+function comprimirImagem(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const max = 1600; const esc_ = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * esc_); c.height = Math.round(img.height * esc_);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.8));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Não consegui ler a imagem')); };
+    img.src = url;
+  });
+}
+$('#d-foto').addEventListener('change', async () => {
+  const f = $('#d-foto').files[0]; if (!f) return;
+  try {
+    fotoDataUrl = await comprimirImagem(f);
+    $('#d-preview img').src = fotoDataUrl; $('#d-preview').classList.remove('oculto');
+  } catch (e) { mostrarErroD(e.message); }
+});
+$('#d-foto-limpar').addEventListener('click', () => { fotoDataUrl = null; $('#d-foto').value = ''; $('#d-preview').classList.add('oculto'); });
+function mostrarErroD(msg) { const e = $('#d-erro'); e.textContent = msg; e.classList.toggle('oculto', !msg); }
+
+async function carregarTipos() {
+  if (Object.keys(TIPOS).length) return;
+  TIPOS = await api('/api/despesas/tipos');
+  $('#d-tipo').innerHTML = Object.entries(TIPOS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+}
+
+$('#d-form').addEventListener('submit', async (e) => {
+  e.preventDefault(); mostrarErroD('');
+  if (!colabSel) return mostrarErroD('Selecione o colaborador.');
+  $('#d-salvar').disabled = true; $('#d-salvar').textContent = 'Salvando…';
+  try {
+    const d = await api('/api/despesas', { method: 'POST', body: {
+      colaborador_id: colabSel, data: $('#d-data').value, tipo: $('#d-tipo').value,
+      valor: $('#d-valor').value, descricao: $('#d-desc').value.trim(), nota: fotoDataUrl,
+    } });
+    $('#d-valor').value = ''; $('#d-desc').value = ''; $('#d-foto-limpar').click();
+    toast(`Despesa salva: ${d.colaborador}, ${TIPOS[d.tipo]}, ${brl(d.valor)}`);
+    carregarDespesas();
+  } catch (err) { mostrarErroD(err.message); }
+  finally { $('#d-salvar').disabled = false; $('#d-salvar').textContent = 'Salvar despesa'; }
+});
+
+async function carregarDespesas() {
+  await carregarTipos();
+  const ds = await api(`/api/despesas?${query($('#d-de').value, $('#d-ate').value, $('#d-colab-f').value)}`);
+  $('#d-tabela tbody').innerHTML = ds.map((d) => `<tr>
+    <td>${dataBR(d.data)}</td><td>${d.colaborador}</td><td>${TIPOS[d.tipo] || d.tipo}</td><td>${esc(d.descricao)}</td>
+    <td class="num"><b>${brl(d.valor)}</b></td>
+    <td>${d.nota_arquivo ? `<img class="thumb" src="/api/despesas/${d.id}/nota" alt="nota" data-full="/api/despesas/${d.id}/nota">` : '—'}</td>
+    <td><button class="excluir" data-id="${d.id}" title="Excluir">✕</button></td></tr>`).join('');
+  $('#d-vazio').classList.toggle('oculto', ds.length > 0);
+  $('#d-tabela tbody').querySelectorAll('.excluir').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Excluir esta despesa?')) return;
+    await api(`/api/despesas/${b.dataset.id}`, { method: 'DELETE' }); carregarDespesas();
+  }));
+}
+$('#d-buscar').addEventListener('click', carregarDespesas);
+
+// clique na miniatura abre a nota em tamanho grande
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (t.classList?.contains('thumb')) {
+    const box = document.createElement('div'); box.id = 'lightbox';
+    const img = document.createElement('img'); img.src = t.dataset.full; box.appendChild(img);
+    box.addEventListener('click', () => box.remove()); document.body.appendChild(box);
+  }
+});
 
 // ---------- config ----------
 async function carregarConfig() {
@@ -287,10 +377,12 @@ $('#cfg-form').addEventListener('submit', async (e) => {
   $('#data').value = hoje();
   const d = new Date(); $('#hora').value = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   [$('#v-de').value, $('#v-ate').value] = mesAtual(0);
+  [$('#d-de').value, $('#d-ate').value] = mesAtual(0);
+  $('#d-data').value = hoje();
   [$('#r-de').value, $('#r-ate').value] = mesAtual(0);
   const st = await api('/api/status').catch(() => ({}));
   $('#aviso-chave').classList.toggle('oculto', !!st.google_key);
   await carregarColabs();
   const aba = location.hash.replace('#', '');
-  if (['viagens', 'relatorio', 'config'].includes(aba)) mostrarAba(aba);
+  if (['viagens', 'despesas', 'relatorio', 'config'].includes(aba)) mostrarAba(aba);
 })();

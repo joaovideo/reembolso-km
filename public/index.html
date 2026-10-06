@@ -19,6 +19,7 @@
   <nav class="abas" role="tablist">
     <button data-aba="nova" class="ativa">Nova viagem</button>
     <button data-aba="viagens">Viagens</button>
+    <button data-aba="despesas">Despesas</button>
     <button data-aba="relatorio">Relatório</button>
     <button data-aba="config">Configurações</button>
   </nav>
@@ -57,6 +58,11 @@
       <label class="check"><input id="ida_volta" type="checkbox"> Ida e volta</label>
       <button type="button" id="inverter" class="sec" title="Trocar origem e destino">⇅ Inverter</button>
     </div>
+    <div class="linha">
+      <div class="campo"><label for="km_saida">Odômetro na saída (km)</label><input id="km_saida" type="number" step="1" min="0" inputmode="numeric" placeholder="Opcional"></div>
+      <div class="campo"><label for="km_chegada">Odômetro na chegada (km)</label><input id="km_chegada" type="number" step="1" min="0" inputmode="numeric" placeholder="Opcional"></div>
+    </div>
+    <p class="nota">Com os dois preenchidos, o reembolso usa a distância real do carro. A rota do Google fica guardada para comparação.</p>
     <div class="linha">
       <div class="campo"><label for="uber_manual">Valor do Uber agora (R$)</label><input id="uber_manual" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Opcional: o que o app do Uber cobra pela ida"></div>
       <div class="campo"><label for="obs">Observação (cliente, motivo)</label><input id="obs" type="text" placeholder="Opcional"></div>
@@ -98,6 +104,42 @@
   </div>
 </section>
 
+<!-- ================= DESPESAS ================= -->
+<section id="aba-despesas" class="aba oculto">
+  <form id="d-form" class="card" autocomplete="off">
+    <div class="campo">
+      <label>Colaborador a reembolsar</label>
+      <div id="d-colabs" class="chips"></div>
+    </div>
+    <div class="linha">
+      <div class="campo"><label for="d-data">Data</label><input id="d-data" type="date" required></div>
+      <div class="campo"><label for="d-tipo">Tipo</label><select id="d-tipo"></select></div>
+      <div class="campo"><label for="d-valor">Valor (R$)</label><input id="d-valor" type="number" step="0.01" min="0" inputmode="decimal" required placeholder="0,00"></div>
+    </div>
+    <div class="campo"><label for="d-desc">Usado em qual situação (cliente, motivo, trajeto)</label><input id="d-desc" type="text" required placeholder="Ex.: estacionamento na visita ao cliente X"></div>
+    <div class="campo">
+      <label for="d-foto">Foto da nota (opcional)</label>
+      <input id="d-foto" type="file" accept="image/*" capture="environment">
+      <div id="d-preview" class="preview oculto"><img alt="Prévia da nota"><button type="button" id="d-foto-limpar" class="sec">Remover foto</button></div>
+    </div>
+    <div class="acoes"><button type="submit" id="d-salvar">Salvar despesa</button></div>
+    <div id="d-erro" class="erro oculto"></div>
+  </form>
+  <div class="card filtros">
+    <label>De <input type="date" id="d-de"></label>
+    <label>Até <input type="date" id="d-ate"></label>
+    <label>Colaborador <select id="d-colab-f"><option value="">Todos</option></select></label>
+    <button type="button" id="d-buscar" class="sec">Filtrar</button>
+  </div>
+  <div class="card tabela-wrap">
+    <table id="d-tabela">
+      <thead><tr><th>Data</th><th>Colaborador</th><th>Tipo</th><th>Situação</th><th class="num">Valor</th><th>Nota</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="d-vazio" class="nota oculto">Nenhuma despesa no período.</p>
+  </div>
+</section>
+
 <!-- ================= RELATÓRIO ================= -->
 <section id="aba-relatorio" class="aba oculto">
   <div class="card filtros no-print">
@@ -114,15 +156,20 @@
     <div class="rel-cab">
       <div class="marca"><svg width="22" height="19" viewBox="0 0 60 51" fill="none"><polygon points="3,3 30,49 37,19" fill="#F0956A" opacity="0.85"/><polygon points="35,1 57,22 30,49 37,19" fill="#E8500A" opacity="0.92"/></svg>
         <div><b>Relatório de reembolso de quilometragem</b><div class="sub" id="rel-periodo"></div></div></div>
-      <div class="rel-total"><span>Total a reembolsar</span><b id="rel-total">R$ 0,00</b></div>
+      <div class="rel-total"><span>Total a reembolsar</span><b id="rel-total">R$ 0,00</b><small id="rel-total-sub"></small></div>
     </div>
     <table id="rel-resumo">
-      <thead><tr><th>Colaborador</th><th class="num">Viagens</th><th class="num">Km</th><th class="num">Reembolso</th><th class="num">Uber (est.)</th><th class="num">Táxi (est.)</th></tr></thead>
+      <thead><tr><th>Colaborador</th><th class="num">Viagens</th><th class="num">Km</th><th class="num">Reembolso km</th><th class="num">Despesas</th><th class="num">Total</th><th class="num">Uber (est.)</th><th class="num">Táxi (est.)</th></tr></thead>
       <tbody></tbody>
     </table>
-    <h3>Detalhamento</h3>
+    <h3>Viagens</h3>
     <table id="rel-det">
       <thead><tr><th>Data</th><th>Colaborador</th><th>Origem → Destino</th><th class="num">Km</th><th>Base</th><th class="num">Reembolso</th><th>Obs.</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <h3>Outras despesas</h3>
+    <table id="rel-desp">
+      <thead><tr><th>Data</th><th>Colaborador</th><th>Tipo</th><th>Situação</th><th class="num">Valor</th><th>Nota</th></tr></thead>
       <tbody></tbody>
     </table>
     <p class="nota">Distâncias calculadas pelo Google Maps na data do registro. Gerado em <span id="rel-gerado"></span>.</p>

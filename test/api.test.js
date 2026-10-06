@@ -69,7 +69,7 @@ test('viagens vazias, relatório e CSV', async () => {
   const csv = await fetch(base + '/api/relatorio.csv?de=2026-10-01&ate=2026-10-31');
   assert.equal(csv.status, 200);
   assert.match(csv.headers.get('content-disposition'), /reembolso-km_2026-10-01_2026-10-31\.csv/);
-  assert.match((await csv.text()).replace(/^\uFEFF/, ''), /^Colaborador;Data;Hora;Origem;Destino;Ida e volta;Km;Minutos;Base do reembolso;Uber informado \(R\$\);/);
+  assert.match((await csv.text()).replace(/^\uFEFF/, ''), /^Colaborador;Data;Hora;Origem;Destino;Ida e volta;Km;Km Google;Odômetro saída;Odômetro chegada;Minutos;Base do reembolso;Uber informado \(R\$\);/);
 });
 
 test('frontend servido', async () => {

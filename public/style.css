@@ -106,3 +106,11 @@ textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-siz
 
 #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: var(--accent); color: #fff; padding: 12px 18px; border-radius: 10px; font-weight: 600; opacity: 0; pointer-events: none; transition: all .25s; z-index: 50; max-width: 90vw; }
 #toast.on { opacity: 1; transform: translateX(-50%); }
+
+.preview { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+.preview img { max-height: 120px; max-width: 200px; border-radius: 8px; border: 1px solid var(--border); }
+.thumb { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); cursor: zoom-in; }
+.rel-total small { display: block; font-size: 12px; color: var(--muted); }
+#lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; align-items: center; justify-content: center; z-index: 100; cursor: zoom-out; }
+#lightbox img { max-width: 95vw; max-height: 95vh; border-radius: 8px; }
+@media print { .thumb { width: 90px; height: 90px; } }

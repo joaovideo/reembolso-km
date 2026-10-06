@@ -41,6 +41,10 @@ Tudo editável em **Configurações**; os defaults são a referência de out/202
 
 **Táxi comum (tabela oficial, Portaria SMT, vigente desde 11/08/2025)** — bandeirada R$ 6,55 + km × R$ 4,80 (bandeira 1) ou R$ 6,24 (bandeira 2, +30%) + tempo parado × R$ 55,50/h. Bandeira 2: 20h–6h de segunda a sábado, e domingos e feriados o dia todo (feriados nacionais + 9/7 estadual + 25/1 e 20/11 municipais, calculados pelo app). Tempo parado = o que a viagem demora além do que levaria a 30 km/h.
 
+**Odômetro (opcional)** — na viagem dá para informar o km do carro na saída e na chegada. Com os dois, o reembolso usa a distância real do carro e a rota do Google fica guardada para comparação (o app avisa se a diferença passar de 2,5×).
+
+**Outras despesas** — aba própria: data, colaborador a reembolsar, tipo (estacionamento, combustível, alimentação, transporte, pedágio, outro), em que situação foi usada, valor e foto da nota (o navegador reduz a imagem para no máximo 1600 px antes de enviar; fica em `data/notas/`). Entram no relatório e no CSV, somando ao total de cada colaborador.
+
 A distância e o tempo vêm do Google (Routes API). Para "ida e volta" o app calcula as duas direções e soma. Os valores são gravados na hora do registro: mudar a tabela depois não altera viagens antigas.
 
 ## API
@@ -52,7 +56,8 @@ A distância e o tempo vêm do Google (Routes API). Para "ida e volta" o app cal
 | GET | `/api/places?q=` | autocomplete de endereço |
 | POST | `/api/calcular` | rota + estimativas, sem gravar |
 | GET/POST/DELETE | `/api/viagens` | filtros `de`, `ate`, `colaborador_id` |
-| GET | `/api/relatorio`, `/api/relatorio.csv` | totais por colaborador + detalhamento |
+| GET/POST/DELETE | `/api/despesas` | outras despesas; `GET /api/despesas/:id/nota` serve a foto; `GET /api/despesas/tipos` |
+| GET | `/api/relatorio`, `/api/relatorio.csv` | totais por colaborador (km + despesas) + detalhamento |
 
 Logs vão para o stdout com horário local (GMT-3): cada cálculo, viagem salva/excluída, alteração de config e erro do Google.
 

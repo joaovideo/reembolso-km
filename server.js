@@ -1,7 +1,9 @@
 'use strict';
 const path = require('node:path');
 const express = require('express');
-const { db, config, salvarConfig, DB_PATH } = require('./lib/db');
+const fs = require('node:fs');
+const crypto = require('node:crypto');
+const { db, config, salvarConfig, DB_PATH, NOTAS_DIR } = require('./lib/db');
 const google = require('./lib/google');
 const T = require('./lib/tarifas');
 
@@ -25,8 +27,9 @@ if (AUTH_USER && AUTH_PASS) {
     res.status(401).send('Acesso restrito');
   });
 }
-app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json({ limit: '8mb' })); // fotos de nota vêm em base64 (comprimidas no cliente)
+// no-cache: o navegador revalida a cada carga, então a equipe recebe a versão nova logo após um deploy
+app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
 
 const log = (...a) => console.log(new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }), ...a);
 
@@ -75,6 +78,16 @@ app.get('/api/places', wrap(async (req, res) => {
   res.json(await google.autocomplete(q, req.query.session ? String(req.query.session) : undefined));
 }));
 
+function lerOdometro(body) {
+  const vazio = (x) => x == null || String(x).trim() === '';
+  if (vazio(body.km_saida) && vazio(body.km_chegada)) return null;
+  if (vazio(body.km_saida) || vazio(body.km_chegada)) throw Object.assign(new Error('Odômetro: informe saída E chegada, ou deixe os dois vazios'), { status: 400 });
+  const saida = Number(String(body.km_saida).replace(',', '.')), chegada = Number(String(body.km_chegada).replace(',', '.'));
+  if (!Number.isFinite(saida) || !Number.isFinite(chegada) || saida < 0) throw Object.assign(new Error('Odômetro: valores inválidos'), { status: 400 });
+  if (chegada <= saida) throw Object.assign(new Error('Odômetro: a chegada precisa ser maior que a saída'), { status: 400 });
+  return { saida, chegada, km: Math.round((chegada - saida) * 100) / 100 };
+}
+
 // Calcula a rota (e a volta, se pedido) e devolve km, tempo e estimativas, sem gravar.
 async function calcular(body) {
   const cfg = config();
@@ -84,12 +97,15 @@ async function calcular(body) {
   if (!origem.endereco && !origem.place_id) throw Object.assign(new Error('Informe a origem'), { status: 400 });
   if (!destino.endereco && !destino.place_id) throw Object.assign(new Error('Informe o destino'), { status: 400 });
 
+  const odo = lerOdometro(body); // valida antes de gastar consulta no Google
   const ida = await google.rota(origem, destino, date);
   let volta = null;
   if (body.ida_volta) volta = await google.rota(destino, origem, null);
 
-  const km = Math.round((ida.km + (volta?.km || 0)) * 100) / 100;
+  const kmGoogle = Math.round((ida.km + (volta?.km || 0)) * 100) / 100;
   const minutos = ida.minutos + (volta?.minutos || 0);
+  // Odômetro do carro (opcional): se saída e chegada vierem, a distância real substitui a do Google no reembolso.
+  const km = odo ? odo.km : kmGoogle;
   const base = { km, minutos, date };
 
   const uber = T.estimarUber(base, cfg.uber);
@@ -102,6 +118,8 @@ async function calcular(body) {
   }
   return {
     km, minutos, ida_volta: body.ida_volta ? 1 : 0,
+    km_google: kmGoogle, km_saida: odo?.saida ?? null, km_chegada: odo?.chegada ?? null,
+    aviso_odometro: odo && kmGoogle > 0 && (odo.km > kmGoogle * 2.5 || odo.km < kmGoogle / 2.5) ? `Odômetro (${odo.km} km) muito diferente da rota do Google (${kmGoogle} km). Confira os números.` : null,
     km_ida: ida.km, km_volta: volta?.km ?? null,
     polyline: ida.polyline, polyline_volta: volta?.polyline || null,
     descricao: ida.descricao,
@@ -144,21 +162,88 @@ app.post('/api/viagens', wrap(async (req, res) => {
   const r = await calcular(b);
   const info = db.prepare(`INSERT INTO viagens
     (colaborador_id, data_hora, origem, destino, origem_place_id, destino_place_id, ida_volta, km, minutos,
-     polyline, polyline_volta, modo_reembolso, valor_km, reembolso, uber_estimado, uber_faixa, taxi_estimado, taxi_bandeira, uber_manual, observacao)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+     polyline, polyline_volta, modo_reembolso, valor_km, reembolso, uber_estimado, uber_faixa, taxi_estimado, taxi_bandeira, uber_manual, observacao,
+     km_google, km_saida, km_chegada)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     colab.id, b.data_hora.slice(0, 16), String(b.origem).trim(), String(b.destino).trim(),
     b.origem_place_id || null, b.destino_place_id || null, r.ida_volta, r.km, r.minutos,
     r.polyline, r.polyline_volta, r.reembolso.modo, r.reembolso.valor_km, r.reembolso.valor,
     r.uber.valor, r.uber.faixa, r.taxi.valor, r.taxi.bandeira, r.uber_manual, b.observacao ? String(b.observacao).trim() : null,
+    r.km_google, r.km_saida, r.km_chegada,
   );
   const v = db.prepare(`${SEL} WHERE v.id = ?`).get(info.lastInsertRowid);
-  log(`viagem #${v.id} ${v.colaborador} ${v.data_hora} ${v.km} km R$ ${v.reembolso} (${v.modo_reembolso}${v.uber_manual ? ` uber R$ ${v.uber_manual}` : ''})`);
+  log(`viagem #${v.id} ${v.colaborador} ${v.data_hora} ${v.km} km${v.km_saida != null ? ` (odômetro ${v.km_saida}→${v.km_chegada}, Google ${v.km_google})` : ''} R$ ${v.reembolso} (${v.modo_reembolso}${v.uber_manual ? ` uber R$ ${v.uber_manual}` : ''})`);
   res.status(201).json(v);
 }));
 
 app.delete('/api/viagens/:id', (req, res) => {
   const r = db.prepare('DELETE FROM viagens WHERE id = ?').run(Number(req.params.id));
   log(`viagem #${req.params.id} excluída`);
+  res.json({ ok: r.changes > 0 });
+});
+
+// ---------- despesas (outros custos) ----------
+const TIPOS = { estacionamento: 'Estacionamento', combustivel: 'Combustível', alimentacao: 'Alimentação', transporte: 'Transporte', pedagio: 'Pedágio', outro: 'Outro' };
+const SELD = `SELECT d.*, c.nome AS colaborador FROM despesas d JOIN colaboradores c ON c.id = d.colaborador_id`;
+
+function filtroDespesas(q) {
+  const where = []; const params = [];
+  if (q.de) { where.push('d.data >= ?'); params.push(q.de); }
+  if (q.ate) { where.push('d.data <= ?'); params.push(q.ate); }
+  if (q.colaborador_id) { where.push('d.colaborador_id = ?'); params.push(Number(q.colaborador_id)); }
+  return { sql: where.length ? ' WHERE ' + where.join(' AND ') : '', params };
+}
+
+app.get('/api/despesas/tipos', (req, res) => res.json(TIPOS));
+
+app.get('/api/despesas', (req, res) => {
+  const f = filtroDespesas(req.query);
+  res.json(db.prepare(`${SELD}${f.sql} ORDER BY d.data DESC, d.id DESC`).all(...f.params));
+});
+
+// Foto da nota: data URL (image/jpeg ou image/png) já reduzida no cliente. Guardada em data/notas/.
+function salvarNota(dataUrl) {
+  if (!dataUrl) return null;
+  const m = /^data:(image\/jpeg|image\/png);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl));
+  if (!m) throw Object.assign(new Error('Foto da nota: envie uma imagem JPEG ou PNG'), { status: 400 });
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length > 5 * 1024 * 1024) throw Object.assign(new Error('Foto da nota: máximo 5 MB'), { status: 400 });
+  const ok = (m[1] === 'image/jpeg' && buf[0] === 0xff && buf[1] === 0xd8) || (m[1] === 'image/png' && buf[0] === 0x89 && buf[1] === 0x50);
+  if (!ok) throw Object.assign(new Error('Foto da nota: arquivo não é uma imagem válida'), { status: 400 });
+  const nome = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${m[1] === 'image/png' ? 'png' : 'jpg'}`;
+  fs.writeFileSync(path.join(NOTAS_DIR, nome), buf);
+  return nome;
+}
+
+app.post('/api/despesas', (req, res) => {
+  const b = req.body || {};
+  const colab = db.prepare('SELECT id FROM colaboradores WHERE id = ? AND ativo = 1').get(Number(b.colaborador_id));
+  if (!colab) return res.status(400).json({ erro: 'Selecione o colaborador' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.data || ''))) return res.status(400).json({ erro: 'Data inválida' });
+  if (!TIPOS[b.tipo]) return res.status(400).json({ erro: 'Tipo de despesa inválido' });
+  const descricao = String(b.descricao || '').trim();
+  if (!descricao) return res.status(400).json({ erro: 'Descreva em que situação a despesa foi usada' });
+  const valor = Number(String(b.valor ?? '').replace(',', '.'));
+  if (!(valor > 0)) return res.status(400).json({ erro: 'Valor inválido' });
+  const nota = salvarNota(b.nota);
+  const info = db.prepare('INSERT INTO despesas (colaborador_id, data, tipo, descricao, valor, nota_arquivo) VALUES (?,?,?,?,?,?)')
+    .run(colab.id, b.data, b.tipo, descricao, Math.round(valor * 100) / 100, nota);
+  const d = db.prepare(`${SELD} WHERE d.id = ?`).get(info.lastInsertRowid);
+  log(`despesa #${d.id} ${d.colaborador} ${d.data} ${TIPOS[d.tipo]} R$ ${d.valor}${nota ? ' com nota' : ''} — ${descricao}`);
+  res.status(201).json(d);
+});
+
+app.get('/api/despesas/:id/nota', (req, res) => {
+  const d = db.prepare('SELECT nota_arquivo FROM despesas WHERE id = ?').get(Number(req.params.id));
+  if (!d?.nota_arquivo) return res.status(404).json({ erro: 'Sem nota' });
+  res.sendFile(path.join(NOTAS_DIR, path.basename(d.nota_arquivo)));
+});
+
+app.delete('/api/despesas/:id', (req, res) => {
+  const d = db.prepare('SELECT nota_arquivo FROM despesas WHERE id = ?').get(Number(req.params.id));
+  const r = db.prepare('DELETE FROM despesas WHERE id = ?').run(Number(req.params.id));
+  if (d?.nota_arquivo) fs.rm(path.join(NOTAS_DIR, path.basename(d.nota_arquivo)), { force: true }, () => {});
+  log(`despesa #${req.params.id} excluída`);
   res.json({ ok: r.changes > 0 });
 });
 
@@ -169,11 +254,25 @@ function relatorio(q) {
   const porColab = db.prepare(`SELECT c.id, c.nome AS colaborador, COUNT(*) AS viagens, ROUND(SUM(v.km), 2) AS km,
       ROUND(SUM(v.reembolso), 2) AS reembolso, ROUND(SUM(v.uber_estimado), 2) AS uber, ROUND(SUM(v.taxi_estimado), 2) AS taxi
     FROM viagens v JOIN colaboradores c ON c.id = v.colaborador_id${f.sql} GROUP BY c.id ORDER BY c.nome`).all(...f.params);
-  const total = porColab.reduce((a, r) => ({
+  const fd = filtroDespesas(q);
+  const despesas = db.prepare(`${SELD}${fd.sql} ORDER BY c.nome, d.data, d.id`).all(...fd.params).map((d) => ({ ...d, tipo_nome: TIPOS[d.tipo] || d.tipo, tem_nota: !!d.nota_arquivo, nota_arquivo: undefined }));
+  const despPorColab = db.prepare(`SELECT c.id, c.nome AS colaborador, COUNT(*) AS n, ROUND(SUM(d.valor), 2) AS valor
+    FROM despesas d JOIN colaboradores c ON c.id = d.colaborador_id${fd.sql} GROUP BY c.id`).all(...fd.params);
+  // junta viagens e despesas por colaborador
+  const mapa = new Map();
+  for (const r of porColab) mapa.set(r.id, { ...r, despesas_n: 0, despesas: 0 });
+  for (const d of despPorColab) {
+    const r = mapa.get(d.id) || { id: d.id, colaborador: d.colaborador, viagens: 0, km: 0, reembolso: 0, uber: 0, taxi: 0 };
+    r.despesas_n = d.n; r.despesas = d.valor; mapa.set(d.id, r);
+  }
+  const colabs = [...mapa.values()].map((r) => ({ ...r, total: Math.round((r.reembolso + (r.despesas || 0)) * 100) / 100 })).sort((a, b) => a.colaborador.localeCompare(b.colaborador));
+  const total = colabs.reduce((a, r) => ({
     viagens: a.viagens + r.viagens, km: a.km + r.km, reembolso: a.reembolso + r.reembolso, uber: a.uber + r.uber, taxi: a.taxi + r.taxi,
-  }), { viagens: 0, km: 0, reembolso: 0, uber: 0, taxi: 0 });
-  for (const k of ['km', 'reembolso', 'uber', 'taxi']) total[k] = Math.round(total[k] * 100) / 100;
-  return { periodo: { de: q.de || null, ate: q.ate || null }, colaboradores: porColab, total, viagens };
+    despesas_n: a.despesas_n + (r.despesas_n || 0), despesas: a.despesas + (r.despesas || 0),
+  }), { viagens: 0, km: 0, reembolso: 0, uber: 0, taxi: 0, despesas_n: 0, despesas: 0 });
+  for (const k of ['km', 'reembolso', 'uber', 'taxi', 'despesas']) total[k] = Math.round(total[k] * 100) / 100;
+  total.geral = Math.round((total.reembolso + total.despesas) * 100) / 100;
+  return { periodo: { de: q.de || null, ate: q.ate || null }, colaboradores: colabs, total, viagens, despesas };
 }
 
 app.get('/api/relatorio', (req, res) => res.json(relatorio(req.query)));
@@ -185,14 +284,21 @@ app.get('/api/relatorio.csv', (req, res) => {
   const num = (x) => (x == null ? '' : String(x).replace('.', ','));
   const esc = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
   const linhas = [
-    ['Colaborador', 'Data', 'Hora', 'Origem', 'Destino', 'Ida e volta', 'Km', 'Minutos', 'Base do reembolso', 'Uber informado (R$)', 'R$/km', 'Reembolso (R$)', 'Uber est. (R$)', 'Faixa Uber', 'Táxi est. (R$)', 'Bandeira', 'Observação'].join(';'),
+    ['Colaborador', 'Data', 'Hora', 'Origem', 'Destino', 'Ida e volta', 'Km', 'Km Google', 'Odômetro saída', 'Odômetro chegada', 'Minutos', 'Base do reembolso', 'Uber informado (R$)', 'R$/km', 'Reembolso (R$)', 'Uber est. (R$)', 'Faixa Uber', 'Táxi est. (R$)', 'Bandeira', 'Observação'].join(';'),
     ...r.viagens.map((v) => [
       esc(v.colaborador), v.data_hora.slice(0, 10).split('-').reverse().join('/'), v.data_hora.slice(11, 16),
-      esc(v.origem), esc(v.destino), v.ida_volta ? 'Sim' : 'Não', num(v.km), v.minutos, BASE[v.modo_reembolso] || v.modo_reembolso, num(v.uber_manual), num(v.valor_km), num(v.reembolso),
+      esc(v.origem), esc(v.destino), v.ida_volta ? 'Sim' : 'Não', num(v.km), num(v.km_google ?? v.km), num(v.km_saida), num(v.km_chegada), v.minutos, BASE[v.modo_reembolso] || v.modo_reembolso, num(v.uber_manual), num(v.valor_km), num(v.reembolso),
       num(v.uber_estimado), esc(v.uber_faixa), num(v.taxi_estimado), v.taxi_bandeira, esc(v.observacao),
     ].join(';')),
     '',
-    ['TOTAL', '', '', '', '', '', num(r.total.km), '', '', '', '', num(r.total.reembolso), num(r.total.uber), '', num(r.total.taxi), '', ''].join(';'),
+    ['TOTAL VIAGENS', '', '', '', '', '', num(r.total.km), '', '', '', '', '', '', '', num(r.total.reembolso), num(r.total.uber), '', num(r.total.taxi), '', ''].join(';'),
+    '',
+    'OUTRAS DESPESAS',
+    ['Colaborador', 'Data', 'Tipo', 'Situação', 'Valor (R$)', 'Nota fiscal'].join(';'),
+    ...r.despesas.map((d) => [esc(d.colaborador), d.data.split('-').reverse().join('/'), esc(d.tipo_nome), esc(d.descricao), num(d.valor), d.tem_nota ? 'Sim' : 'Não'].join(';')),
+    ['TOTAL DESPESAS', '', '', '', num(r.total.despesas), ''].join(';'),
+    '',
+    ['TOTAL GERAL A REEMBOLSAR', '', '', '', num(r.total.geral), ''].join(';'),
   ];
   const nome = `reembolso-km_${r.periodo.de || 'inicio'}_${r.periodo.ate || 'hoje'}.csv`;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
